@@ -68,6 +68,17 @@ fn remove_same_base_different_extension(path: &Path) -> anyhow::Result<bool> {
     Ok(removed_something)
 }
 
+/// Whether any file with the same base path but potentially a different
+/// extension exists. The output extension can change between responses.
+pub fn snapshot_exists(path: &Path) -> anyhow::Result<bool> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path.file_stem();
+    let exists = read_dir(parent)?
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().file_stem() == stem);
+    Ok(exists)
+}
+
 pub fn write_only_changed(path: &Path, content: &str) -> anyhow::Result<ChangeKind> {
     if let Some(parent) = path.parent() {
         create_dir_all(parent)?;
@@ -90,5 +101,30 @@ pub fn write_only_changed(path: &Path, content: &str) -> anyhow::Result<ChangeKi
         Ok(ChangeKind::Changed)
     } else {
         Ok(ChangeKind::ContentSame)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_exists_ignores_extension() -> anyhow::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let path = tempdir.path().join("de/example/index.html");
+        create_dir_all(path.parent().unwrap())?;
+        assert!(!snapshot_exists(&path)?);
+
+        write(&path, "content")?;
+        assert!(snapshot_exists(&path)?);
+
+        // A different extension with the same stem still counts as the snapshot.
+        let other_extension = tempdir.path().join("de/example/index.md");
+        assert!(snapshot_exists(&other_extension)?);
+
+        // A different stem does not.
+        let other_stem = tempdir.path().join("de/example/other.md");
+        assert!(!snapshot_exists(&other_stem)?);
+        Ok(())
     }
 }

@@ -565,6 +565,25 @@ Examples:
       - rss: {}
 ```
 
+## Conditional requests
+
+In order to avoid downloading unchanged pages on every run, website-stalker
+remembers the `ETag` and `Last-Modified` response headers of each site and
+sends them back as `If-None-Match` and `If-Modified-Since` on the next run.
+The final URL after redirects is stored as well, so redirects are only
+followed once.
+
+When the server answers with `304 Not Modified` the stored snapshot is kept
+and the site is reported as unchanged — no body is downloaded and no commit
+is created.
+Temporary failures like timeouts or `5xx` responses never delete or alter
+the last successful snapshot.
+
+The request state is persisted between runs inside the git repository at
+`.git/website-stalker/state.json` so it does not show up in `git status`.
+When website-stalker is used outside of a git repository the state is stored
+in `.website-stalker/state.json` instead.
+
 ## Alternatives
 
 - [Website Changed Bot](https://github.com/EdJoPaTo/website-changed-bot) is a Telegram Bot which might potentially use this tool later on

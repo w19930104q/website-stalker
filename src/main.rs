@@ -1,5 +1,7 @@
 use core::time::Duration;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::{fs, process};
 
 use clap::Parser as _;
@@ -24,6 +26,7 @@ mod logger;
 mod notification;
 mod site;
 mod site_store;
+mod state_store;
 
 const WAIT_BETWEEN_SAME_HOST: Duration = Duration::from_secs(5);
 
@@ -138,6 +141,18 @@ async fn run(
     }
 
     let repo = git::Repo::new();
+    // `Repo::new` guarantees the repository top level is the working directory.
+    // Inside a git repository the state lives in `.git` so it never shows up
+    // in `git status` and a clean repository stays clean. Without a git
+    // repository a hidden directory in the working directory is used.
+    let state_dir = match &repo {
+        Ok(_) => PathBuf::from(state_store::GIT_STATE_DIR),
+        Err(_) => PathBuf::from(state_store::PLAIN_STATE_DIR),
+    };
+    let state_store = Arc::new(
+        state_store::StateStore::load(&state_dir)
+            .expect("failed to load the persistent request state"),
+    );
     match &repo {
         Ok(repo) => {
             if repo.is_something_modified() {
@@ -166,6 +181,9 @@ async fn run(
         for file in removed {
             logger::warn(&format!("Remove superfluous {}", file.display()));
         }
+        // State of sites removed from the configuration is gone as well.
+        let state_keys: Vec<PathBuf> = paths.iter().map(|path| path.with_extension("")).collect();
+        state_store.prune(&state_keys);
     }
 
     if sites_amount < sites_total {
@@ -194,12 +212,13 @@ async fn run(
         for (_, sites) in groups {
             let from = from.clone();
             let tx = tx.clone();
+            let state_store = Arc::clone(&state_store);
             tokio::spawn(async move {
                 for (i, site) in sites.into_iter().enumerate() {
                     if i > 0 {
                         sleep(WAIT_BETWEEN_SAME_HOST).await;
                     }
-                    let result = stalk_and_save_site(&from, &site).await;
+                    let result = stalk_and_save_site(&from, &site, &state_store).await;
                     tx.send((site.url, result, site.options.ignore_error))
                         .await
                         .expect("failed to send stalking result");
@@ -222,6 +241,7 @@ async fn run(
                     ip_version,
                     took,
                     url,
+                    validators: _,
                 },
             )) => {
                 eprintln!(
@@ -246,6 +266,13 @@ async fn run(
             }
         }
     }
+
+    // Persist validators and final URLs for the conditional requests of the
+    // next run. Failed sites never updated the store, so their previous
+    // successful state and snapshot remain intact.
+    state_store
+        .persist()
+        .expect("failed to persist the request state");
 
     let commit = repo
         .ok()
@@ -282,34 +309,75 @@ async fn run(
 async fn stalk_and_save_site(
     from: &HeaderValue,
     site: &Site,
+    state_store: &state_store::StateStore,
 ) -> anyhow::Result<(ChangeKind, http::ResponseMeta)> {
     let mut headers = site.options.headers.clone();
     if !headers.contains_key(FROM) {
         headers.insert(FROM, from.clone());
     }
-    let (content, response) = http::get(
-        site.url.as_str(),
+
+    // Use site.url as the file basename should only change when the config
+    // changes (manually). It is also the key for the persistent state.
+    let mut path = site.to_file_path();
+    let state_key = path.with_extension("");
+    let previous = state_store.get(&state_key);
+
+    // Request the final URL of the last run to avoid repeating redirects.
+    let request_url = previous
+        .as_ref()
+        .map_or(site.url.as_str(), |state| state.url.as_str());
+    let validators = previous.as_ref().map(|state| &state.validators);
+
+    let outcome = http::get(
+        request_url,
         headers,
+        validators,
         site.options.accept_invalid_certs,
         site.options.http1_only,
     )
     .await
     .map_err(reqwest::Error::without_url)?;
 
-    if site.url.as_str() != response.url.as_str() {
+    let (content, response) = match outcome {
+        http::GetOutcome::NotModified(response) => {
+            // The server says nothing changed. The stored snapshot remains
+            // the source of truth and no content change is reported.
+            if site_store::snapshot_exists(&path)? {
+                return Ok((ChangeKind::ContentSame, response));
+            }
+            // No local snapshot to reuse: drop the stale state so the next
+            // run does a plain GET again instead of another useless 304.
+            state_store.remove(&state_key);
+            anyhow::bail!(
+                "server answered 304 Not Modified but no local snapshot exists for {}",
+                site.url
+            );
+        }
+        http::GetOutcome::Fresh(content, response) => (content, response),
+    };
+
+    if request_url != response.url.as_str() {
         logger::warn(&format!(
             "The URL {} was redirected to {}. This caused additional traffic which can be reduced by changing the URL to the target one.",
-            site.url, response.url
+            request_url, response.url
         ));
     }
 
     // Use response.url as canonical urls for example are relative to the actual url
     let content = editor::Editor::apply_many(&site.options.editors, &response.url, content)?;
     let extension = content.extension.unwrap_or("txt");
-
-    // Use site.url as the file basename should only change when the config changes (manually)
-    let mut path = site.to_file_path();
     path.set_extension(extension);
+
+    // Remember the validators and final URL only after a successful response.
+    // On any failure above neither the state nor the stored snapshot changes.
+    state_store.put(
+        state_key,
+        state_store::SiteState {
+            url: response.url.clone(),
+            validators: response.validators.clone(),
+        },
+    );
+
     let changed = site_store::write_only_changed(&path, &content.text)?;
     Ok((changed, response))
 }

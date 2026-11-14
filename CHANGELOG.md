@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Persistent conditional requests: the `ETag` and `Last-Modified` response headers as well as the final URL after redirects are stored and reused on the next run via `If-None-Match` / `If-Modified-Since`. A `304 Not Modified` keeps the stored snapshot and is not treated as a content change.
+- The request state is stored in `.git/website-stalker/state.json` (or `.website-stalker/state.json` when not run inside a git repository), so it does not show up in `git status`.
+
+### Fixed
+
+- Temporary request failures (timeouts, `5xx`, connection errors) no longer touch the stored snapshot or the request state, so the last successful result remains available and the next run retries with the known validators.
+
 ## [0.27.1] - 2026-06-13
 
 ### Changed
