@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Responses are now stored as byte snapshots so binary content like PDFs or images and non-UTF-8 text like UTF-16 pages are tracked correctly. Without editors the body is saved byte for byte.
+- Text responses with editors are decoded based on the `Content-Type` charset (including UTF-16, also recognized from a byte order mark) instead of assuming UTF-8.
+- The file extension is determined from the `Content-Type` header with the final URL as a fallback, and an editor output extension (for example `txt` or `json`) overrides it.
+
+### Changed
+
+- Snapshots are only written when the content changed and writes are now atomic, so a failed write keeps the previous snapshot.
+- When the file extension changes, the file with the old extension is removed instead of being left behind.
+
+### Fixed
+
+- Binary attachments and UTF-16 pages no longer get corrupted or fail because the response was forced through `response.text()` before comparison.
+- Configuring text editors on an explicitly binary response now fails with a clear error instead of producing a corrupted file.
+
 ## [0.27.1] - 2026-06-13
 
 ### Changed

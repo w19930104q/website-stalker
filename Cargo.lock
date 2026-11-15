@@ -2827,6 +2827,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "encoding_rs",
  "html2md",
  "html5ever 0.39.0",
  "lazy-regex",

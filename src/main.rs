@@ -287,7 +287,7 @@ async fn stalk_and_save_site(
     if !headers.contains_key(FROM) {
         headers.insert(FROM, from.clone());
     }
-    let (content, response) = http::get(
+    let (response_content, response) = http::get(
         site.url.as_str(),
         headers,
         site.options.accept_invalid_certs,
@@ -303,13 +303,36 @@ async fn stalk_and_save_site(
         ));
     }
 
+    let http::ResponseContent {
+        content,
+        extension,
+        charset,
+        is_text,
+    } = response_content;
+
+    if !site.options.editors.is_empty() && !is_text {
+        anyhow::bail!(
+            "editors are configured but the response is not text content (charset {charset}); \
+             editors can only process text, remove the editors to store the raw bytes"
+        );
+    }
+
     // Use response.url as canonical urls for example are relative to the actual url
-    let content = editor::Editor::apply_many(&site.options.editors, &response.url, content)?;
-    let extension = content.extension.unwrap_or("txt");
+    let processed = editor::Editor::apply_many(
+        &site.options.editors,
+        &response.url,
+        content,
+        charset,
+        extension,
+    )?;
+
+    // The extension is determined by the Content-Type / final URL and may be
+    // changed by an editor output. Fall back to txt for editor-only content.
+    let extension = processed.extension.unwrap_or_else(|| "txt".to_owned());
 
     // Use site.url as the file basename should only change when the config changes (manually)
     let mut path = site.to_file_path();
     path.set_extension(extension);
-    let changed = site_store::write_only_changed(&path, &content.text)?;
+    let changed = site_store::write_only_changed(&path, processed.content.as_bytes())?;
     Ok((changed, response))
 }

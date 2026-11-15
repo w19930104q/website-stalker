@@ -7,7 +7,7 @@ use scraper::Selector;
 use serde::Deserialize;
 use url::Url;
 
-use super::Editor;
+use super::{Content, Editor};
 
 const GENERATOR: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_REPOSITORY"),);
 
@@ -118,12 +118,9 @@ impl Rss {
                 builder.pub_date(bla.to_rfc2822());
             }
 
-            let content = super::Content {
-                extension: Some("html"),
-                text: item.html(),
-            };
-            let content = Editor::apply_many(&self.content_editors, url, content)?;
-            builder.content(content.text);
+            let content = Content::Text(item.html());
+            let processed = Editor::apply_many(&self.content_editors, url, content, "utf-8", None)?;
+            builder.content(processed.content.as_text().to_owned());
 
             items.push(builder.build());
         }

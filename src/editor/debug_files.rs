@@ -11,15 +11,11 @@ pub fn debug_files(path: &Path, content: Content) -> anyhow::Result<Content> {
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
-    let mut filename = format!("{}-{}", timestamp.as_secs(), timestamp.subsec_nanos());
-    if let Some(extension) = content.extension {
-        filename += ".";
-        filename += extension;
-    }
+    let filename = format!("{}-{}", timestamp.as_secs(), timestamp.subsec_nanos());
 
     let file = path.join(filename);
     logger::warn(&format!("debug_files writes {}", file.display()));
-    std::fs::write(file, &content.text)?;
+    std::fs::write(file, content.as_bytes())?;
 
     Ok(content)
 }

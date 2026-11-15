@@ -5,7 +5,7 @@ use scraper::{ElementRef, Html, Selector};
 use serde::Deserialize;
 use url::Url;
 
-use super::Editor;
+use super::{Content, Editor};
 use crate::logger;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -71,16 +71,20 @@ impl CssSort {
     }
 
     fn get_sort_key_from_element(&self, url: &Url, element: &ElementRef) -> String {
-        let content = super::Content {
-            extension: Some("html"),
-            text: element.html(),
-        };
-        Editor::apply_many(&self.sort_by, url, content).map_or_else(
+        let content = Content::Text(element.html());
+        Editor::apply_many(
+            &self.sort_by,
+            url,
+            content,
+            "utf-8",
+            Some("html".to_owned()),
+        )
+        .map_or_else(
             |error| {
                 logger::error(&format!("css_sort sort_by failed {error:#}"));
                 String::new()
             },
-            |content| content.text,
+            |processed| processed.content.as_text().to_owned(),
         )
     }
 }

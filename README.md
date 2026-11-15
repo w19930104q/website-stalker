@@ -239,6 +239,20 @@ For this reason editors like `css_select` are still producing valid HTML output.
 There are probably more tasks out there that might be useful as editors.
 Feel free to provide an issue for an editor idea or create a Pull Request with a new editor.
 
+#### Content handling and file types
+
+Every response is stored as a byte snapshot so any content type can be tracked, not just HTML.
+Without editors the response body is saved byte for byte, which keeps binary content like PDFs or images intact.
+The file extension is derived from the `Content-Type` header and, when that does not provide one, from the final URL (for example after a redirect).
+
+When a site has editors the body is treated as text and decoded once using the charset from the `Content-Type` header.
+UTF-16 and other non-UTF-8 pages are supported as long as the charset is declared; UTF-16 content is also recognized from its byte order mark.
+Editors only work on text, so configuring them for an explicitly binary response (like `application/pdf`) fails with a clear error instead of corrupting the file.
+The last editor determines the output extension (for example `html_textify` produces `.txt`, `json_prettify` produces `.json`) while editors such as `regex_replace` keep the current extension.
+
+Unchanged snapshots are never rewritten and a failed write keeps the previous snapshot.
+When the extension changes (for example `html` to `txt`) the old file is removed so no stale files remain.
+
 #### `css_flatten`
 
 Replaces every matching HTML element with its child nodes and returns the HTML.
